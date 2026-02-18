@@ -468,6 +468,7 @@ async def run_pipeline(request: Request):
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
+import hashlib
 
 # Ensure CORS is enabled (if not already)
 app.add_middleware(
@@ -484,8 +485,13 @@ class SimilarityRequest(BaseModel):
 
 
 def fake_embedding(text: str):
-    np.random.seed(abs(hash(text)) % (10**6))
-    return np.random.rand(384)
+    # Deterministic embedding based on MD5
+    hash_digest = hashlib.md5(text.encode()).digest()
+    vector = np.frombuffer(hash_digest, dtype=np.uint8).astype(float)
+
+    # Expand to fixed size (repeat pattern)
+    expanded = np.tile(vector, 24)[:384]
+    return expanded
 
 
 def cosine_similarity(a, b):
