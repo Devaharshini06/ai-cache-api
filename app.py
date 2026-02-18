@@ -181,14 +181,29 @@ def get_analytics():
         ]
     }
 
-
 @app.post("/secure")
-async def secure_endpoint(req: Request, payload: SecurityRequest):
+async def secure_endpoint(req: Request):
+    try:
+        payload = await req.json()
+    except:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "blocked": True,
+                "reason": "Invalid JSON",
+                "sanitizedOutput": None,
+                "confidence": 0.99
+            }
+        )
 
-    user_key = f"{payload.userId}:{payload.category}"
+    user_id = payload.get("userId", "anonymous")
+    category = payload.get("category", "default")
+    input_text = payload.get("input", "")
+
+    user_key = f"{user_id}:{category}"
     now = time.time()
 
-    # Clean old timestamps (keep last 60s)
+    # Clean old timestamps (60 sec window)
     rate_limit_store[user_key] = [
         t for t in rate_limit_store[user_key]
         if now - t < WINDOW_SECONDS
@@ -196,7 +211,7 @@ async def secure_endpoint(req: Request, payload: SecurityRequest):
 
     requests_last_minute = rate_limit_store[user_key]
 
-    # Hard limit: 29 per minute
+    # 29 per minute limit
     if len(requests_last_minute) >= RATE_LIMIT_PER_MINUTE:
         return JSONResponse(
             status_code=429,
@@ -209,7 +224,7 @@ async def secure_endpoint(req: Request, payload: SecurityRequest):
             headers={"Retry-After": "60"}
         )
 
-    # Burst limit: more than 6 in 1 second
+    # Burst limit: 6 in 1 second
     recent_burst = [t for t in requests_last_minute if now - t < 1]
 
     if len(recent_burst) >= BURST_LIMIT:
@@ -230,6 +245,7 @@ async def secure_endpoint(req: Request, payload: SecurityRequest):
     return {
         "blocked": False,
         "reason": "Input passed all security checks",
-        "sanitizedOutput": payload.input.strip(),
+        "sanitizedOutput": input_text.strip(),
         "confidence": 0.95
     }
+
