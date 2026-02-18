@@ -1,3 +1,4 @@
+from fastapi.middleware.cors import CORSMiddleware
 import hashlib
 import time
 import sys
@@ -7,6 +8,14 @@ from collections import OrderedDict
 import numpy as np
 
 app = FastAPI()
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 # ---------------- CONFIG ----------------
 MODEL_COST_PER_MILLION = 1.00
