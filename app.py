@@ -538,5 +538,118 @@ async def similarity_endpoint(req: SimilarityRequest):
             "error": str(e)
         }
 
+from typing import List
+import time
+import hashlib
+import numpy as np
+from pydantic import BaseModel
+
+# -------- SAMPLE 62 REVIEW DOCS --------
+REVIEWS = [
+    f"Customer review {i}: The battery life is excellent and performance is smooth."
+    if i % 3 == 0 else
+    f"Customer review {i}: I experienced battery drain and overheating issues."
+    if i % 3 == 1 else
+    f"Customer review {i}: Build quality is solid but battery life could improve."
+    for i in range(62)
+]
+
+# -------- REQUEST MODEL --------
+class SearchRequest(BaseModel):
+    query: str
+    k: int = 10
+    rerank: bool = True
+    rerankK: int = 6
+
+
+# -------- DETERMINISTIC EMBEDDING --------
+def embed_text(text: str):
+    digest = hashlib.md5(text.encode()).digest()
+    vec = np.frombuffer(digest, dtype=np.uint8).astype(float)
+    vec = np.tile(vec, 24)[:384]
+    return vec
+
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+# -------- SEMANTIC SEARCH ENDPOINT --------
+@app.post("/semantic-search")
+async def semantic_search(req: SearchRequest):
+    start = time.time()
+
+    query_embedding = embed_text(req.query)
+
+    # ----- Stage 1: Initial Retrieval -----
+    scored = []
+    for idx, doc in enumerate(REVIEWS):
+        doc_embedding = embed_text(doc)
+        score = cosine_similarity(query_embedding, doc_embedding)
+        scored.append((idx, doc, score))
+
+    scored.sort(key=lambda x: x[2], reverse=True)
+
+    top_candidates = scored[:req.k]
+
+    # ----- Stage 2: Re-ranking -----
+    if req.rerank:
+        reranked = []
+        for idx, doc, score in top_candidates:
+            # simple boosted scoring (simulate cross-encoder)
+            keyword_bonus = 0.2 if req.query.lower() in doc.lower() else 0
+            new_score = score + keyword_bonus
+            reranked.append((idx, doc, new_score))
+
+        # normalize scores 0-1
+        scores_only = [s[2] for s in reranked]
+        min_s, max_s = min(scores_only), max(scores_only)
+
+        normalized = []
+        for idx, doc, s in reranked:
+            if max_s - min_s == 0:
+                norm = 1.0
+            else:
+                norm = (s - min_s) / (max_s - min_s)
+            normalized.append((idx, doc, norm))
+
+        normalized.sort(key=lambda x: x[2], reverse=True)
+        final_results = normalized[:req.rerankK]
+
+    else:
+        # normalize initial scores
+        scores_only = [s[2] for s in top_candidates]
+        min_s, max_s = min(scores_only), max(scores_only)
+
+        normalized = []
+        for idx, doc, s in top_candidates:
+            if max_s - min_s == 0:
+                norm = 1.0
+            else:
+                norm = (s - min_s) / (max_s - min_s)
+            normalized.append((idx, doc, norm))
+
+        normalized.sort(key=lambda x: x[2], reverse=True)
+        final_results = normalized[:req.rerankK]
+
+    latency = int((time.time() - start) * 1000)
+
+    return {
+        "results": [
+            {
+                "id": idx,
+                "score": round(score, 4),
+                "content": doc,
+                "metadata": {"source": "product_reviews"}
+            }
+            for idx, doc, score in final_results
+        ],
+        "reranked": req.rerank,
+        "metrics": {
+            "latency": latency,
+            "totalDocs": len(REVIEWS)
+        }
+    }
+
 
 
