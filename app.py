@@ -511,7 +511,13 @@ async def similarity_endpoint(req: SimilarityRequest):
 
         scored_docs.sort(key=lambda x: x[1], reverse=True)
 
-        top_matches = [doc for doc, _ in scored_docs[:3]]
+        top_matches = [doc for doc, _ in scored_docs]
+
+        # Ensure exactly 3 results
+        while len(top_matches) < 3:
+            top_matches.append(None)
+
+        top_matches = top_matches[:3]
 
         return {
             "matches": top_matches
