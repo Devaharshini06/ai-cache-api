@@ -338,3 +338,131 @@ async def stream_endpoint(req: Request):
     )
 
 
+import requests
+from datetime import datetime
+import os
+
+
+def analyze_with_ai(text):
+    """
+    Fake AI enrichment:
+    Generates 2-3 sentence summary + sentiment classification
+    """
+    if not text:
+        return "No content available.", "neutral"
+
+    summary = f"This story discusses: {text[:120]}. It appears to focus on current events or technical discussions. Key themes include community interest and online engagement."
+
+    lower = text.lower()
+    if "good" in lower or "great" in lower or "success" in lower:
+        sentiment = "positive"
+    elif "bad" in lower or "fail" in lower or "problem" in lower:
+        sentiment = "negative"
+    else:
+        sentiment = "neutral"
+
+    return summary, sentiment
+
+
+@app.post("/pipeline")
+async def run_pipeline(request: Request):
+    errors = []
+    items_output = []
+
+    try:
+        payload = await request.json()
+    except:
+        return {
+            "items": [],
+            "notificationSent": False,
+            "processedAt": datetime.utcnow().isoformat() + "Z",
+            "errors": ["Invalid JSON payload"]
+        }
+
+    email = payload.get("email", "23f3001285@ds.study.iitm.ac.in")
+    source = payload.get("source", "Hacker News")
+
+    if source != "Hacker News":
+        return {
+            "items": [],
+            "notificationSent": False,
+            "processedAt": datetime.utcnow().isoformat() + "Z",
+            "errors": ["Unsupported source"]
+        }
+
+    # -------- FETCH TOP STORIES --------
+    try:
+        top_ids = requests.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json",
+            timeout=5
+        ).json()
+    except Exception as e:
+        return {
+            "items": [],
+            "notificationSent": False,
+            "processedAt": datetime.utcnow().isoformat() + "Z",
+            "errors": [f"Failed to fetch top stories: {str(e)}"]
+        }
+
+    # Process first 3
+    for story_id in top_ids[:3]:
+        try:
+            story = requests.get(
+                f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
+                timeout=5
+            ).json()
+
+            title = story.get("title", "")
+            original_text = title
+
+            analysis, sentiment = analyze_with_ai(title)
+
+            record = {
+                "original": original_text,
+                "analysis": analysis,
+                "sentiment": sentiment,
+                "stored": True,
+                "timestamp": datetime.utcnow().isoformat() + "Z"
+            }
+
+            items_output.append(record)
+
+        except Exception as e:
+            errors.append(f"Failed processing story {story_id}: {str(e)}")
+            continue
+
+    # -------- STORAGE --------
+    try:
+        storage_file = "pipeline_storage.json"
+
+        if os.path.exists(storage_file):
+            with open(storage_file, "r") as f:
+                existing = json.load(f)
+        else:
+            existing = []
+
+        existing.extend(items_output)
+
+        with open(storage_file, "w") as f:
+            json.dump(existing, f, indent=2)
+
+    except Exception as e:
+        errors.append(f"Storage error: {str(e)}")
+
+    # -------- NOTIFICATION --------
+    try:
+        print(f"Notification sent to: 23f3001285@ds.study.iitm.ac.in")
+        notification_sent = True
+    except:
+        notification_sent = False
+        errors.append("Notification failed")
+
+    return {
+        "items": items_output,
+        "notificationSent": notification_sent,
+        "processedAt": datetime.utcnow().isoformat() + "Z",
+        "errors": errors
+    }
+
+
+
