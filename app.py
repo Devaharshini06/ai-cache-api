@@ -31,7 +31,7 @@ WINDOW_SECONDS = 60
 
 # ---------------- STORAGE ----------------
 cache = OrderedDict()
-rate_limit_store = defaultdict(list)
+rate_limit_store = {}
 
 analytics = {
     "totalRequests": 0,
@@ -203,25 +203,45 @@ async def secure_endpoint(req: Request):
     user_ip = req.client.host
     user_key = user_id or user_ip
 
-    cleanup_old_requests(user_key)
-
     now = time.time()
-    request_times = rate_limit_store[user_key]
 
-    # ---- TOTAL LIMIT: 29 per minute ----
-    if len(request_times) >= RATE_LIMIT_PER_MINUTE:
-        return JSONResponse(
-            status_code=429,
-            content={
-                "blocked": True,
-                "reason": "Rate limit exceeded",
-                "sanitizedOutput": None,
-                "confidence": 0.99
-            },
-            headers={"Retry-After": str(WINDOW_SECONDS)}
-        )
+    # ---- TOKEN BUCKET INIT ----
+    bucket = rate_limit_store.get(user_key)
 
-    rate_limit_store[user_key].append(now)
+    if not bucket:
+        bucket = {
+            "tokens": 29,
+            "last_refill": now
+        }
+        rate_limit_store[user_key] = bucket
+
+    # ---- REFILL TOKENS ----
+    elapsed = now - bucket["last_refill"]
+    refill_rate = RATE_LIMIT_PER_MINUTE / WINDOW_SECONDS  # tokens per second
+    refill = elapsed * refill_rate
+
+    if refill > 0:
+        bucket["tokens"] = min(29, bucket["tokens"] + refill)
+        bucket["last_refill"] = now
+
+    # ---- BURST LOGIC ----
+    # Only allow 6 instant burst
+    if bucket["tokens"] > 6:
+        bucket["tokens"] -= 1
+    else:
+        if bucket["tokens"] >= 1:
+            bucket["tokens"] -= 1
+        else:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "blocked": True,
+                    "reason": "Rate limit exceeded",
+                    "sanitizedOutput": None,
+                    "confidence": 0.99
+                },
+                headers={"Retry-After": "60"}
+            )
 
     return {
         "blocked": False,
