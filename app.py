@@ -44,6 +44,12 @@ class QueryRequest(BaseModel):
     query: str
     application: str
 
+class SecurityRequest(BaseModel):
+    userId: str
+    input: str
+    category: str
+
+
 # ---------------- UTILITIES ----------------
 def normalize(text: str) -> str:
     return text.strip().lower()
@@ -177,13 +183,9 @@ def get_analytics():
 
 
 @app.post("/secure")
-async def secure_endpoint(req: Request, payload: dict):
-    user_id = payload.get("userId")
-    input_text = payload.get("input")
-    category = payload.get("category")
-
-    if not user_id or not input_text:
-        raise HTTPException(status_code=400, detail="Invalid request")
+async def secure_endpoint(req: Request, payload: SecurityRequest):
+    user_id = payload.userId
+    input_text = payload.input
 
     user_ip = req.client.host
     user_key = user_id or user_ip
@@ -193,9 +195,8 @@ async def secure_endpoint(req: Request, payload: dict):
     now = time.time()
     request_times = rate_limit_store[user_key]
 
-    # ---- BURST CHECK (more than 6 in last 1 second) ----
+    # Burst check (6 per second)
     recent_requests = [t for t in request_times if now - t < 1]
-
     if len(recent_requests) >= BURST_LIMIT:
         return JSONResponse(
             status_code=429,
@@ -208,7 +209,7 @@ async def secure_endpoint(req: Request, payload: dict):
             headers={"Retry-After": "1"}
         )
 
-    # ---- TOTAL RATE CHECK (29 per minute) ----
+    # Total rate limit (29 per minute)
     if len(request_times) >= RATE_LIMIT_PER_MINUTE:
         return JSONResponse(
             status_code=429,
@@ -229,6 +230,3 @@ async def secure_endpoint(req: Request, payload: dict):
         "sanitizedOutput": input_text.strip(),
         "confidence": 0.95
     }
-
-
-
