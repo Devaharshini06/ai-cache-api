@@ -465,4 +465,58 @@ async def run_pipeline(request: Request):
     }
 
 
+from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
+import numpy as np
+
+# Ensure CORS is enabled (if not already)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class SimilarityRequest(BaseModel):
+    docs: list[str]
+    query: str
+
+
+def fake_embedding(text: str):
+    np.random.seed(abs(hash(text)) % (10**6))
+    return np.random.rand(384)
+
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
+@app.post("/similarity")
+async def similarity_endpoint(req: SimilarityRequest):
+    try:
+        query_embedding = fake_embedding(req.query)
+
+        scored_docs = []
+
+        for doc in req.docs:
+            doc_embedding = fake_embedding(doc)
+            score = cosine_similarity(query_embedding, doc_embedding)
+            scored_docs.append((doc, score))
+
+        # Sort by similarity descending
+        scored_docs.sort(key=lambda x: x[1], reverse=True)
+
+        top_matches = [doc for doc, _ in scored_docs[:3]]
+
+        return {
+            "matches": top_matches
+        }
+
+    except Exception as e:
+        return {
+            "matches": [],
+            "error": str(e)
+        }
+
 
