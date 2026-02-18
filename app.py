@@ -181,6 +181,15 @@ def get_analytics():
         ]
     }
 
+@app.post("/reset")
+def reset():
+    cache.clear()
+    analytics["totalRequests"] = 0
+    analytics["cacheHits"] = 0
+    analytics["cacheMisses"] = 0
+    return {"status": "reset"}
+
+
 @app.post("/secure")
 async def secure_endpoint(request: Request):
     try:
