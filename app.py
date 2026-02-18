@@ -484,33 +484,31 @@ class SimilarityRequest(BaseModel):
     query: str
 
 
-def fake_embedding(text: str):
-    # Deterministic embedding based on MD5
-    hash_digest = hashlib.md5(text.encode()).digest()
-    vector = np.frombuffer(hash_digest, dtype=np.uint8).astype(float)
+from openai import OpenAI
 
-    # Expand to fixed size (repeat pattern)
-    expanded = np.tile(vector, 24)[:384]
-    return expanded
+client = OpenAI()
 
+def get_embedding(text: str):
+    response = client.embeddings.create(
+        model="text-embedding-3-small",
+        input=text
+    )
+    return np.array(response.data[0].embedding)
 
-def cosine_similarity(a, b):
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
 @app.post("/similarity")
 async def similarity_endpoint(req: SimilarityRequest):
     try:
-        query_embedding = fake_embedding(req.query)
+        query_embedding = get_embedding(req.query)
 
         scored_docs = []
 
         for doc in req.docs:
-            doc_embedding = fake_embedding(doc)
+            doc_embedding = get_embedding(doc)
             score = cosine_similarity(query_embedding, doc_embedding)
             scored_docs.append((doc, score))
 
-        # Sort by similarity descending
         scored_docs.sort(key=lambda x: x[1], reverse=True)
 
         top_matches = [doc for doc, _ in scored_docs[:3]]
@@ -524,5 +522,6 @@ async def similarity_endpoint(req: SimilarityRequest):
             "matches": [],
             "error": str(e)
         }
+
 
 
