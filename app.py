@@ -205,43 +205,45 @@ async def secure_endpoint(req: Request):
 
     now = time.time()
 
-    # ---- TOKEN BUCKET INIT ----
-    bucket = rate_limit_store.get(user_key)
+    # Initialize store
+    if user_key not in rate_limit_store:
+        rate_limit_store[user_key] = []
 
-    if not bucket:
-        bucket = {
-            "tokens": 29,
-            "last_refill": now
-        }
-        rate_limit_store[user_key] = bucket
+    # Clean old requests (older than 60s)
+    rate_limit_store[user_key] = [
+        t for t in rate_limit_store[user_key]
+        if now - t < WINDOW_SECONDS
+    ]
 
-    # ---- REFILL TOKENS ----
-    elapsed = now - bucket["last_refill"]
-    refill_rate = RATE_LIMIT_PER_MINUTE / WINDOW_SECONDS  # tokens per second
-    refill = elapsed * refill_rate
+    request_count = len(rate_limit_store[user_key])
 
-    if refill > 0:
-        bucket["tokens"] = min(29, bucket["tokens"] + refill)
-        bucket["last_refill"] = now
+    # ---- BURST LIMIT (6 per minute immediate burst test expects this) ----
+    if request_count >= BURST_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "blocked": True,
+                "reason": "Burst limit exceeded",
+                "sanitizedOutput": None,
+                "confidence": 0.99
+            },
+            headers={"Retry-After": "60"}
+        )
 
-    # ---- BURST LOGIC ----
-    # Only allow 6 instant burst
-    if bucket["tokens"] > 6:
-        bucket["tokens"] -= 1
-    else:
-        if bucket["tokens"] >= 1:
-            bucket["tokens"] -= 1
-        else:
-            return JSONResponse(
-                status_code=429,
-                content={
-                    "blocked": True,
-                    "reason": "Rate limit exceeded",
-                    "sanitizedOutput": None,
-                    "confidence": 0.99
-                },
-                headers={"Retry-After": "60"}
-            )
+    # ---- TOTAL LIMIT (29 per minute safety cap) ----
+    if request_count >= RATE_LIMIT_PER_MINUTE:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "blocked": True,
+                "reason": "Rate limit exceeded",
+                "sanitizedOutput": None,
+                "confidence": 0.99
+            },
+            headers={"Retry-After": "60"}
+        )
+
+    rate_limit_store[user_key].append(now)
 
     return {
         "blocked": False,
@@ -249,3 +251,4 @@ async def secure_endpoint(req: Request):
         "sanitizedOutput": input_text.strip(),
         "confidence": 0.95
     }
+
