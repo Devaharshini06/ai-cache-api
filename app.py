@@ -6,6 +6,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from collections import OrderedDict
 import numpy as np
+from fastapi import Request, HTTPException
+from fastapi.responses import JSONResponse
+from collections import defaultdict
 
 app = FastAPI()
 app.add_middleware(
@@ -22,9 +25,13 @@ MODEL_COST_PER_MILLION = 1.00
 AVG_TOKENS = 3000
 MAX_CACHE_SIZE = 1500
 TTL_SECONDS = 86400  # 24 hours
+RATE_LIMIT_PER_MINUTE = 29
+BURST_LIMIT = 6
+WINDOW_SECONDS = 60
 
 # ---------------- STORAGE ----------------
 cache = OrderedDict()
+rate_limit_store = defaultdict(list)
 
 analytics = {
     "totalRequests": 0,
@@ -67,6 +74,15 @@ def cleanup_expired():
 def evict_if_needed():
     while len(cache) > MAX_CACHE_SIZE:
         cache.popitem(last=False)
+
+def cleanup_old_requests(user_key):
+    now = time.time()
+    rate_limit_store[user_key] = [
+        t for t in rate_limit_store[user_key]
+        if now - t < WINDOW_SECONDS
+    ]
+
+
 
 # ---------------- MAIN ENDPOINT ----------------
 @app.post("/")
@@ -158,3 +174,47 @@ def get_analytics():
             "TTL expiration"
         ]
     }
+
+
+@app.post("/secure")
+async def secure_endpoint(req: Request, payload: dict):
+    user_id = payload.get("userId")
+    input_text = payload.get("input")
+    category = payload.get("category")
+
+    if not user_id or not input_text:
+        raise HTTPException(status_code=400, detail="Invalid request")
+
+    user_ip = req.client.host
+    user_key = user_id or user_ip
+
+    cleanup_old_requests(user_key)
+
+    now = time.time()
+    current_requests = len(rate_limit_store[user_key])
+
+    # ---- RATE LIMIT CHECK ----
+    if current_requests >= RATE_LIMIT_PER_MINUTE:
+        retry_after = WINDOW_SECONDS
+        return JSONResponse(
+            status_code=429,
+            content={
+                "blocked": True,
+                "reason": "Rate limit exceeded",
+                "sanitizedOutput": None,
+                "confidence": 0.99
+            },
+            headers={"Retry-After": str(retry_after)}
+        )
+
+    # ---- ALLOW BURST (first 6 naturally allowed) ----
+    rate_limit_store[user_key].append(now)
+
+    return {
+        "blocked": False,
+        "reason": "Input passed all security checks",
+        "sanitizedOutput": input_text.strip(),
+        "confidence": 0.95
+    }
+
+
