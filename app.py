@@ -191,11 +191,25 @@ async def secure_endpoint(req: Request, payload: dict):
     cleanup_old_requests(user_key)
 
     now = time.time()
-    current_requests = len(rate_limit_store[user_key])
+    request_times = rate_limit_store[user_key]
 
-    # ---- RATE LIMIT CHECK ----
-    if current_requests >= RATE_LIMIT_PER_MINUTE:
-        retry_after = WINDOW_SECONDS
+    # ---- BURST CHECK (more than 6 in last 1 second) ----
+    recent_requests = [t for t in request_times if now - t < 1]
+
+    if len(recent_requests) >= BURST_LIMIT:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "blocked": True,
+                "reason": "Burst limit exceeded",
+                "sanitizedOutput": None,
+                "confidence": 0.99
+            },
+            headers={"Retry-After": "1"}
+        )
+
+    # ---- TOTAL RATE CHECK (29 per minute) ----
+    if len(request_times) >= RATE_LIMIT_PER_MINUTE:
         return JSONResponse(
             status_code=429,
             content={
@@ -204,10 +218,9 @@ async def secure_endpoint(req: Request, payload: dict):
                 "sanitizedOutput": None,
                 "confidence": 0.99
             },
-            headers={"Retry-After": str(retry_after)}
+            headers={"Retry-After": str(WINDOW_SECONDS)}
         )
 
-    # ---- ALLOW BURST (first 6 naturally allowed) ----
     rate_limit_store[user_key].append(now)
 
     return {
@@ -216,5 +229,6 @@ async def secure_endpoint(req: Request, payload: dict):
         "sanitizedOutput": input_text.strip(),
         "confidence": 0.95
     }
+
 
 
