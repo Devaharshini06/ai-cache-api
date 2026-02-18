@@ -200,8 +200,8 @@ async def secure_endpoint(req: Request):
     user_id = payload.get("userId", "anonymous")
     input_text = payload.get("input", "")
 
-    user_ip = req.client.host
-    user_key = user_id or user_ip
+    category = payload.get("category", "default")
+    user_key = f"{user_id}:{category}"
 
     now = time.time()
 
