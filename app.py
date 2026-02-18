@@ -183,19 +183,12 @@ def get_analytics():
 
 
 @app.post("/secure")
-async def secure_endpoint(req: Request, payload: dict):
+async def secure_endpoint(req: Request, payload: SecurityRequest):
 
-    user_id = payload.get("userId", "anonymous")
-    input_text = payload.get("input", "")
-    category = payload.get("category", "default")
-
-    if not input_text:
-        raise HTTPException(status_code=400, detail="Invalid request")
-
-    user_key = f"{user_id}:{category}"
+    user_key = f"{payload.userId}:{payload.category}"
     now = time.time()
 
-    # Clean old requests
+    # Clean old timestamps (keep last 60s)
     rate_limit_store[user_key] = [
         t for t in rate_limit_store[user_key]
         if now - t < WINDOW_SECONDS
@@ -203,20 +196,20 @@ async def secure_endpoint(req: Request, payload: dict):
 
     requests_last_minute = rate_limit_store[user_key]
 
-    # 🔹 HARD LIMIT: 29 per minute
+    # Hard limit: 29 per minute
     if len(requests_last_minute) >= RATE_LIMIT_PER_MINUTE:
         return JSONResponse(
             status_code=429,
             content={
                 "blocked": True,
-                "reason": "Rate limit exceeded (29/min)",
+                "reason": "Rate limit exceeded",
                 "sanitizedOutput": None,
                 "confidence": 0.99
             },
             headers={"Retry-After": "60"}
         )
 
-    # 🔹 BURST CHECK: more than 6 in 1 second
+    # Burst limit: more than 6 in 1 second
     recent_burst = [t for t in requests_last_minute if now - t < 1]
 
     if len(recent_burst) >= BURST_LIMIT:
@@ -237,6 +230,6 @@ async def secure_endpoint(req: Request, payload: dict):
     return {
         "blocked": False,
         "reason": "Input passed all security checks",
-        "sanitizedOutput": input_text.strip(),
+        "sanitizedOutput": payload.input.strip(),
         "confidence": 0.95
     }
