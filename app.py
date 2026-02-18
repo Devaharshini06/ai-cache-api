@@ -499,16 +499,10 @@ def embed_text(text: str):
     vec = np.tile(vec, 24)[:384]
     return vec
 
-
-def cosine_similarity(a, b):
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
-
-
 from openai import OpenAI
 import numpy as np
 
-client = OpenAI()  # requires OPENAI_API_KEY in Railway env vars
-
+client = OpenAI()
 
 def cosine_similarity(a, b):
     return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
@@ -517,6 +511,7 @@ def cosine_similarity(a, b):
 @app.post("/similarity")
 async def similarity_endpoint(req: SimilarityRequest):
     try:
+        # Batch embed query + docs
         inputs = [req.query] + req.docs
 
         response = client.embeddings.create(
@@ -524,7 +519,7 @@ async def similarity_endpoint(req: SimilarityRequest):
             input=inputs
         )
 
-        embeddings = [np.array(d.embedding) for d in response.data]
+        embeddings = [np.array(item.embedding) for item in response.data]
 
         query_embedding = embeddings[0]
         doc_embeddings = embeddings[1:]
@@ -532,21 +527,21 @@ async def similarity_endpoint(req: SimilarityRequest):
         scored = []
 
         for doc, emb in zip(req.docs, doc_embeddings):
-            score = float(
-                np.dot(query_embedding, emb) /
-                (np.linalg.norm(query_embedding) * np.linalg.norm(emb))
-            )
+            score = cosine_similarity(query_embedding, emb)
             scored.append((doc, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
 
-        top_matches = [doc for doc, _ in scored[:3]]
-
-        return {"matches": top_matches}
+        return {
+            "matches": [doc for doc, _ in scored[:3]]
+        }
 
     except Exception:
-        # fallback: return first 3 docs
-        return {"matches": req.docs[:3]}
+        # fallback only if something crashes
+        return {
+            "matches": req.docs[:3]
+        }
+
 
 
 #18
