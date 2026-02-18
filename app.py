@@ -504,31 +504,54 @@ def cosine_similarity(a, b):
     return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
+from openai import OpenAI
+import numpy as np
+
+client = OpenAI()  # requires OPENAI_API_KEY in Railway env vars
+
+
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
+
 @app.post("/similarity")
 async def similarity_endpoint(req: SimilarityRequest):
     try:
         if not req.docs or len(req.docs) == 0:
             return {"matches": []}
 
-        query_embedding = embed_text(req.query)
+        # Batch embed query + docs
+        inputs = [req.query] + req.docs
+
+        response = client.embeddings.create(
+            model="text-embedding-3-small",
+            input=inputs
+        )
+
+        embeddings = [np.array(item.embedding) for item in response.data]
+
+        query_embedding = embeddings[0]
+        doc_embeddings = embeddings[1:]
 
         scored = []
-        for doc in req.docs:
-            doc_embedding = embed_text(doc)
-            score = cosine_similarity(query_embedding, doc_embedding)
+        for doc, doc_emb in zip(req.docs, doc_embeddings):
+            score = cosine_similarity(query_embedding, doc_emb)
             scored.append((doc, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
 
-        # Always return exactly top 3 (or fewer if <3 docs)
         top_matches = [doc for doc, _ in scored[:3]]
 
         return {
             "matches": top_matches
         }
 
-    except Exception:
-        return {"matches": []}
+    except Exception as e:
+        return {
+            "matches": [],
+            "error": "Embedding failed"
+        }
+
 
 #18
 from typing import List
