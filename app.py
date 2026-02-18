@@ -199,7 +199,6 @@ async def secure_endpoint(req: Request):
 
     user_id = payload.get("userId", "anonymous")
     input_text = payload.get("input", "")
-    category = payload.get("category", "")
 
     user_ip = req.client.host
     user_key = user_id or user_ip
@@ -209,21 +208,7 @@ async def secure_endpoint(req: Request):
     now = time.time()
     request_times = rate_limit_store[user_key]
 
-    # ---- BURST LIMIT (6 per second) ----
-    recent_requests = [t for t in request_times if now - t < 1]
-    if len(recent_requests) >= BURST_LIMIT:
-        return JSONResponse(
-            status_code=429,
-            content={
-                "blocked": True,
-                "reason": "Burst limit exceeded",
-                "sanitizedOutput": None,
-                "confidence": 0.99
-            },
-            headers={"Retry-After": "1"}
-        )
-
-    # ---- TOTAL LIMIT (29 per minute) ----
+    # ---- TOTAL LIMIT: 29 per minute ----
     if len(request_times) >= RATE_LIMIT_PER_MINUTE:
         return JSONResponse(
             status_code=429,
