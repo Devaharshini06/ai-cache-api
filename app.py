@@ -183,9 +183,23 @@ def get_analytics():
 
 
 @app.post("/secure")
-async def secure_endpoint(req: Request, payload: SecurityRequest):
-    user_id = payload.userId
-    input_text = payload.input
+async def secure_endpoint(req: Request):
+    try:
+        payload = await req.json()
+    except Exception:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "blocked": True,
+                "reason": "Invalid JSON payload",
+                "sanitizedOutput": None,
+                "confidence": 0.99
+            }
+        )
+
+    user_id = payload.get("userId", "anonymous")
+    input_text = payload.get("input", "")
+    category = payload.get("category", "")
 
     user_ip = req.client.host
     user_key = user_id or user_ip
@@ -195,7 +209,7 @@ async def secure_endpoint(req: Request, payload: SecurityRequest):
     now = time.time()
     request_times = rate_limit_store[user_key]
 
-    # Burst check (6 per second)
+    # ---- BURST LIMIT (6 per second) ----
     recent_requests = [t for t in request_times if now - t < 1]
     if len(recent_requests) >= BURST_LIMIT:
         return JSONResponse(
@@ -209,7 +223,7 @@ async def secure_endpoint(req: Request, payload: SecurityRequest):
             headers={"Retry-After": "1"}
         )
 
-    # Total rate limit (29 per minute)
+    # ---- TOTAL LIMIT (29 per minute) ----
     if len(request_times) >= RATE_LIMIT_PER_MINUTE:
         return JSONResponse(
             status_code=429,
