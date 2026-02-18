@@ -511,53 +511,42 @@ client = OpenAI()  # requires OPENAI_API_KEY in Railway env vars
 
 
 def cosine_similarity(a, b):
-    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
+    return float(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
 
 
 @app.post("/similarity")
 async def similarity_endpoint(req: SimilarityRequest):
     try:
-        docs = req.docs or []
-        query = req.query
-
-        # If fewer than 3 docs, pad logic safely
-        if len(docs) == 0:
-            return {"matches": ["", "", ""]}
-
-        inputs = [query] + docs
+        inputs = [req.query] + req.docs
 
         response = client.embeddings.create(
             model="text-embedding-3-small",
             input=inputs
         )
 
-        embeddings = [np.array(item.embedding) for item in response.data]
+        embeddings = [np.array(d.embedding) for d in response.data]
 
         query_embedding = embeddings[0]
         doc_embeddings = embeddings[1:]
 
         scored = []
-        for doc, emb in zip(docs, doc_embeddings):
-            score = cosine_similarity(query_embedding, emb)
+
+        for doc, emb in zip(req.docs, doc_embeddings):
+            score = float(
+                np.dot(query_embedding, emb) /
+                (np.linalg.norm(query_embedding) * np.linalg.norm(emb))
+            )
             scored.append((doc, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
 
         top_matches = [doc for doc, _ in scored[:3]]
 
-        # Guarantee exactly 3
-        while len(top_matches) < 3:
-            top_matches.append(docs[0])
-
         return {"matches": top_matches}
 
     except Exception:
-        # Fallback safe return
-        fallback = req.docs[:3] if req.docs else ["", "", ""]
-        while len(fallback) < 3:
-            fallback.append("")
-        return {"matches": fallback}
-
+        # fallback: return first 3 docs
+        return {"matches": req.docs[:3]}
 
 
 #18
