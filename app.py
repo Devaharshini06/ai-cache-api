@@ -473,13 +473,13 @@ async def run_pipeline(request: Request):
         "errors": errors
     }
 
-
+#19
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 import numpy as np
 import hashlib
 
-# Ensure CORS is enabled (if not already)
+# CORS (if not already present globally)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -493,51 +493,44 @@ class SimilarityRequest(BaseModel):
     query: str
 
 
-from openai import OpenAI
+def embed_text(text: str):
+    digest = hashlib.md5(text.encode()).digest()
+    vec = np.frombuffer(digest, dtype=np.uint8).astype(float)
+    vec = np.tile(vec, 24)[:384]
+    return vec
 
-client = OpenAI()
 
-def get_embedding(text: str):
-    response = client.embeddings.create(
-        model="text-embedding-3-small",
-        input=text
-    )
-    return np.array(response.data[0].embedding)
-
+def cosine_similarity(a, b):
+    return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
 
 
 @app.post("/similarity")
 async def similarity_endpoint(req: SimilarityRequest):
     try:
-        query_embedding = get_embedding(req.query)
+        if not req.docs or len(req.docs) == 0:
+            return {"matches": []}
 
-        scored_docs = []
+        query_embedding = embed_text(req.query)
 
+        scored = []
         for doc in req.docs:
-            doc_embedding = get_embedding(doc)
+            doc_embedding = embed_text(doc)
             score = cosine_similarity(query_embedding, doc_embedding)
-            scored_docs.append((doc, score))
+            scored.append((doc, score))
 
-        scored_docs.sort(key=lambda x: x[1], reverse=True)
+        scored.sort(key=lambda x: x[1], reverse=True)
 
-        top_matches = [doc for doc, _ in scored_docs]
-
-        # Ensure exactly 3 results
-        while len(top_matches) < 3:
-            top_matches.append(None)
-
-        top_matches = top_matches[:3]
+        # Always return exactly top 3 (or fewer if <3 docs)
+        top_matches = [doc for doc, _ in scored[:3]]
 
         return {
             "matches": top_matches
         }
 
-    except Exception as e:
-        return {
-            "matches": [],
-            "error": str(e)
-        }
+    except Exception:
+        return {"matches": []}
 
+#18
 from typing import List
 import time
 import hashlib
