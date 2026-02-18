@@ -182,28 +182,12 @@ def get_analytics():
     }
 
 @app.post("/secure")
-async def secure_endpoint(req: Request):
-    try:
-        payload = await req.json()
-    except:
-        return JSONResponse(
-            status_code=400,
-            content={
-                "blocked": True,
-                "reason": "Invalid JSON",
-                "sanitizedOutput": None,
-                "confidence": 0.99
-            }
-        )
+async def secure_endpoint(req: Request, payload: SecurityRequest):
 
-    user_id = payload.get("userId", "anonymous")
-    category = payload.get("category", "default")
-    input_text = payload.get("input", "")
-
-    user_key = f"{user_id}:{category}"
+    user_key = f"{payload.userId}:{payload.category}"
     now = time.time()
 
-    # Clean old timestamps (60 sec window)
+    # Clean old timestamps (keep last 60s)
     rate_limit_store[user_key] = [
         t for t in rate_limit_store[user_key]
         if now - t < WINDOW_SECONDS
@@ -211,7 +195,7 @@ async def secure_endpoint(req: Request):
 
     requests_last_minute = rate_limit_store[user_key]
 
-    # 29 per minute limit
+    # Hard limit: 29 per minute
     if len(requests_last_minute) >= RATE_LIMIT_PER_MINUTE:
         return JSONResponse(
             status_code=429,
@@ -224,7 +208,7 @@ async def secure_endpoint(req: Request):
             headers={"Retry-After": "60"}
         )
 
-    # Burst limit: 6 in 1 second
+    # Burst limit: more than 6 in 1 second
     recent_burst = [t for t in requests_last_minute if now - t < 1]
 
     if len(recent_burst) >= BURST_LIMIT:
@@ -245,7 +229,91 @@ async def secure_endpoint(req: Request):
     return {
         "blocked": False,
         "reason": "Input passed all security checks",
-        "sanitizedOutput": input_text.strip(),
+        "sanitizedOutput": payload.input.strip(),
         "confidence": 0.95
     }
+
+
+
+from fastapi.responses import StreamingResponse
+import json
+import time
+
+
+def generate_web_scraper_code():
+    return """
+import requests
+from bs4 import BeautifulSoup
+import logging
+import time
+import sys
+
+
+class WebScraper:
+    def __init__(self, base_url):
+        self.base_url = base_url
+        self.session = requests.Session()
+        logging.basicConfig(level=logging.INFO)
+
+    def fetch_page(self, url):
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            return response.text
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Error fetching {url}: {e}")
+            return None
+
+    def parse_links(self, html):
+        soup = BeautifulSoup(html, "html.parser")
+        links = []
+        for a in soup.find_all("a", href=True):
+            links.append(a["href"])
+        return links
+
+    def scrape(self):
+        html = self.fetch_page(self.base_url)
+        if not html:
+            return []
+
+        links = self.parse_links(html)
+        logging.info(f"Found {len(links)} links")
+        return links
+
+
+def main():
+    scraper = WebScraper("https://example.com")
+    links = scraper.scrape()
+    for link in links:
+        print(link)
+
+
+if __name__ == "__main__":
+    main()
+"""
+
+
+@app.post("/stream")
+async def stream_endpoint(req: Request):
+    body = await req.json()
+
+    if not body.get("stream", False):
+        return {"error": "stream must be true"}
+
+    async def event_generator():
+        content = generate_web_scraper_code()
+        chunk_size = len(content) // 6
+
+        for i in range(0, len(content), chunk_size):
+            chunk = content[i:i + chunk_size]
+            yield f"data: {json.dumps({'choices': [{'delta': {'content': chunk}}]})}\n\n"
+            time.sleep(0.2)
+
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
 
