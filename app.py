@@ -84,7 +84,7 @@ def summarize(req: QueryRequest):
     if key in cache:
         analytics["cacheHits"] += 1
         cache.move_to_end(key)
-        latency = int((time.time() - start) * 1000)
+        latency = max(1, int((time.time() - start) * 1000))
         return {
             "answer": cache[key]["response"],
             "cached": True,
@@ -98,7 +98,7 @@ def summarize(req: QueryRequest):
         similarity = cosine_similarity(new_embedding, v["embedding"])
         if similarity > 0.95:
             analytics["cacheHits"] += 1
-            latency = int((time.time() - start) * 1000)
+            latency = max(1, int((time.time() - start) * 1000))
             return {
                 "answer": v["response"],
                 "cached": True,
@@ -119,7 +119,7 @@ def summarize(req: QueryRequest):
     cache.move_to_end(key)
     evict_if_needed()
 
-    latency = int((time.time() - start) * 1000)
+    latency = max(1, int((time.time() - start) * 1000))
 
     return {
         "answer": response,
